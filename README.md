@@ -1,28 +1,60 @@
-# osu-collector-dl
+# osu-collector-dl++
 
-A program that automates the scraping, download, and beatmap collection generation for Osu!Collector.
+Enhanced fork of [osu-collector-dl](https://github.com/roogue/osu-collector-dl) with VLESS proxy support, localization, and additional features.
+
+## Features
+
+- **Multi-language support**: English and Russian interface
+- **VLESS Proxy Integration**: Built-in support for VLESS proxies with automatic rate limit tracking
+- **Tournament Downloads**: Download map pools from osu! tournaments by ID
+- **Multiple Download Modes**:
+  - Mode 1: Download beatmaps only
+  - Mode 2: Download + generate .osdb file
+  - Mode 3: Generate .osdb only
+  - Mode 4: Download to Songs folder + add to collection.db
+  - Mode 5: Add to collection.db only (instant)
+- **Collection Management**: Fix hashes and download missing beatmaps
+- **Backup Tool**: Backup all local maps to collection.db
+- **Clipboard Support**: Paste collection IDs, paths, and VLESS links with Ctrl+V
+- **Multiple Mirror Support**: catboy.best, nerinyan.moe, osu.direct, sayobot.cn, beatconnect.io, nekoha.moe
 
 ## Installation
 
-1. Download the latest release from the [releases](https://github.com/roogue/osu-collector-dl/releases) page.
-2. Extract the compressed file
+### Option 1: Download Pre-built Binary
+1. Download `osu-collector-dl.exe` from the [releases](https://github.com/xuyg5743/relife-osu-collector-dl-plusplus/releases) page
+2. Run the executable
+
+### Option 2: Build from Source
+See [Building](#building) section below.
 
 ## Usage
 
-1. Run the `osu-collector-dl.exe` file from the downloaded folder.
-2. Enter the ID of the collection you want to download. To find the ID, look at the end of the Osu!Collector collection URL. For example, if the URL is https://osucollector.com/collections/44/speed-practice, you would enter 44 as the ID.
-3. Select a working mode.
-4. Wait until the program finishes its task.
+1. Run `osu-collector-dl.exe`
+2. Select language on first launch
+3. Complete setup wizard (Standard or Advanced)
+4. Choose an action:
+   - **1**: Download collection by ID
+   - **2**: Download tournament maps by ID
+   - **3**: Settings (configure proxies, mirrors, paths)
+   - **4**: Fix hashes + download missing maps
+   - **5**: Backup all local maps to collection.db
+
+### VLESS Proxy Setup
+
+1. Go to Settings (option 3)
+2. Select option 8 (VLESS Proxies)
+3. Choose "Add server" and paste your VLESS link
+4. Select active proxy from the list
+5. Rate limits are tracked automatically for each proxy
+
+VLESS links format:
+```
+vless://uuid@host:port?type=ws&security=tls&path=%2Fpath&sni=host.com&fp=chrome#ServerName
+```
 
 ## Configuration
 
-You can customize various settings for the program by editing the `config.json` file. To do this, follow the instructions below:
-
-1. Right-click on the `config.json` file
-2. Select "Open with" from the context menu.
-3. Choose a text editor (such as Notepad) to open the file and make desired changes.
-
-Below is the data stored in the config.json.
+Settings are managed through the in-app settings menu (option 3) or by editing `config.json`:
 
 ```json
 {
@@ -31,78 +63,123 @@ Below is the data stored in the config.json.
   "intervalCap": 50,
   "logSize": 15,
   "directory": "",
-  "mode": 1
+  "mode": 1,
+  "useSubfolder": true,
+  "osuPath": "C:\\osu!",
+  "mirror": "catboy",
+  "catboyServer": "default",
+  "skipExisting": true,
+  "lang": "en",
+  "proxy": "",
+  "activeProxyIndex": -1,
+  "vlessServers": []
 }
 ```
 
-### Explaination
+### Key Settings
 
-> **parallel**
->
-> - `true` Download multiple beatmap sets at the same time.
-> - `false` Download only one beatmap set at a time.
+- **parallel**: Enable parallel downloads (true/false)
+- **concurrency**: Number of simultaneous downloads (1-10)
+- **intervalCap**: Max downloads per minute (0-120)
+- **mode**: Default working mode (1-5)
+- **osuPath**: Path to osu! installation folder
+- **mirror**: Download mirror (catboy/nerinyan/osu.direct/sayobot/beatconnect/nekoha)
+- **vlessServers**: Array of VLESS proxy links (managed via settings menu)
+- **activeProxyIndex**: Currently active proxy (-1 = direct connection)
 
-> **concurrency** (DO NOT CHANGE IF YOU ARE NOT SURE OF WHAT YOU ARE DOING)
->
-> - The number of downloads to request at a time.
-> - Range: 0 - 10
-> - It is recommended to set this to a low number (such as 5) to prevent abuse of the osu!mirror API and getting potential IP bans or rate limits.
+## Building
 
-> **intervalCap** (DO NOT CHANGE IF YOU ARE NOT SURE OF WHAT YOU ARE DOING)
->
-> - The maximum number of downloads to request in one minute.
-> - Range: 0 - 120
-> - It is recommended to set this to a low number (such as 50) to prevent abuse of the osu!mirror API and getting potential IP bans or rate limits.
+### Prerequisites
+- Node.js 16+
+- Yarn package manager
+- xray-core binary (for VLESS support)
 
-> **logSize**
->
-> - The maximum number of log messages during the download process.
+### Build Steps
 
-> **directory**
->
-> - The path to the folder where you want to save the downloaded beatmaps.
-> - If no value is provided, the current working directory will be used.
-> - The double quotes around the path is necessary.
+1. **Install dependencies**:
+```bash
+yarn install
+```
 
-> **mode**
->
-> - `1`: Download Beatmap Set only.
-> - `2`: Download Beatmap Set + Generate .osdb
-> - `3`: Generate .osdb only.
+2. **Download xray-core** (optional, for VLESS proxy support):
+   - Download from [Xray-core releases](https://github.com/XTLS/Xray-core/releases)
+   - Create `bin/` folder in project root
+   - Place `xray.exe` (Windows) or `xray` (Linux) in `bin/`
+
+3. **Build for Windows**:
+```bash
+yarn build-app-win
+```
+
+4. **Build for Linux**:
+```bash
+yarn build-app-linux
+```
+
+5. **Output**:
+   - Windows: `build/win-x64/osu-collector-dl.exe`
+   - Linux: `build/linux-arm64/osu-collector-dl`
+
+### Development
+
+Run in development mode:
+```bash
+yarn start
+```
+
+Compile TypeScript only:
+```bash
+yarn build-ts
+```
+
+Lint code:
+```bash
+yarn lint
+```
 
 ## FAQ
 
+### How do I use VLESS proxies?
+
+> Go to Settings → VLESS Proxies (option 8). Add your VLESS links one by one, then select which proxy to use. The app automatically tracks rate limits for each proxy. If xray-core is bundled in the .exe, it will be extracted automatically on first run.
+
 ### It says "Retrying" during the download process, am I doing anything wrong?
 
-> It is normal for API requests to sometimes fail due to factors such as rate limiting and internet connection issues. The script has a built-in retrying process that will handle these issues automatically. It is expected to see the "Retrying" message during the download process.
+> This is normal. API requests can fail due to rate limiting or connection issues. The app automatically retries failed downloads.
 
-### I want the beatmaps to be automatically added to my collections. Is that possible?
+### How do I download tournament map pools?
 
-> Unfortunately, this feature will not be implemented as directly modifying your personal osu! folder is risky and could potentially result in corrupted files. It is recommended to use [Collection Manager](https://github.com/Piotrekol/CollectionManager) (CM) by Piotrekol to modify your collection for more stable functionality.
+> Select option 2 from the main menu, enter the tournament ID from osucollector.com, then choose which stage to download (or 0 for all stages).
 
-### Why won't my program even start? The program shuts off right after I opened it.
+### Can I paste collection IDs or paths instead of typing?
 
-> There could be several reasons why your program is not starting. One potential cause is that you have incorrectly edited the config file, such as forgetting to include double quotes around the directory path. If you are not sure what the problem is, try reinstalling the program.
+> Yes! Use Ctrl+V to paste text in any input field (collection IDs, file paths, VLESS links, etc.).
 
-### The program freezes in the middle of the process without displaying any error messages. What can I do?
+### Can beatmaps be automatically added to my collections?
 
-> It can be due to the program is waiting for the next burst of download requests to prevent unwanted rate limits or IP bans. You can also try pressing Enter on your keyboard to see if that prompts the program to continue. This can sometimes happen if you accidentally clicked on the terminal window, which can cause the program to pause.
+> Yes! Use Mode 4 (download to Songs + add to collection.db) or Mode 5 (add to collection.db only). The app safely manages your collection.db with automatic backups.
 
-### I’ve reached my daily download limit. How can I get the remaining beatmaps?
+### I've reached my daily download limit. What can I do?
 
-> You can use [Collection Manager](https://github.com/Piotrekol/CollectionManager) (CM) by Piotrekol along with the generated .osdb file to download the missing beatmaps. Alternatively, you can wait until the limit resets the next day.
+> Add VLESS proxies in Settings (option 8) to bypass rate limits, or use [Collection Manager](https://github.com/Piotrekol/CollectionManager) with the generated .osdb file.
 
-### I accidentally downloaded the wrong collection. How can I stop the downloads?
+### How do I stop downloads?
 
-> To stop the downloads, you can simply close the terminal window. This will terminate the program. Alternatively, you can try pressing CTRL+C on your keyboard, which will send a signal to the program to stop running.
+> Press Ctrl+C to exit immediately. The app will save a log of missing beatmaps so you can resume later.
 
-### I have tried following the FAQ above, but it didn't solve my problem. The problem I am experiencing is not listed in the FAQ.
+### Where can I report bugs?
 
-> If you are experiencing a problem that is not covered in the FAQ and you need assistance, it is welcome to open an issue on the [Issue Page](https://github.com/roogue/osu-collector-dl/issues) or [Bug Report Form](https://forms.gle/KoHtcmsj94ahKFJy6). After navigating to the issue page, click the green "New issue" button on the page and follow the instructions to describe your problem in as much detail as possible. This will allow the maintainers of the project to better understand and help troubleshoot the issue you are experiencing.
+> Open an issue on the [Issue Page](https://github.com/xuyg5743/relife-osu-collector-dl-plusplus/issues).
 
-## Feedback
+## Please support
 
-It would be nice to hear feedback from you! [Feedback Form](https://forms.gle/bCZ25JVdQSKvgbWD9)
+- [osucollector.com](https://osucollector.com) — the service that makes this possible
+- [Collection Manager](https://github.com/Piotrekol/CollectionManager) — great tool for managing osu! collections
+- Download mirrors: [catboy.best](https://catboy.best), [nerinyan.moe](https://nerinyan.moe), [osu.direct](https://osu.direct), [sayobot.cn](https://osu.sayobot.cn), [beatconnect.io](https://beatconnect.io), [nekoha.moe](https://nekoha.moe)
+
+## Disclaimer
+
+Not affiliated with osu! or ppy Pty Ltd.
 
 ## License
 
