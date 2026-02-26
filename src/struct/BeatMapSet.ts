@@ -1,29 +1,45 @@
 import { v1ResBeatMapSetType, v1ResBeatMapType } from "../core/Requestor";
 import type { Json } from "../types";
-import { checkUndefined } from "../util";
+import Util from "../util";
 import { BeatMap, BeatMapId } from "./BeatMap";
 import OcdlError from "./OcdlError";
 
 export type BeatMapSetId = number;
 
 export class BeatMapSet {
+  // Compulsory property
   id: BeatMapSetId;
   beatMaps: Map<BeatMapId, BeatMap>;
+
+  // Nullable property
   title?: string;
   artist?: string;
 
   constructor(jsonData: Json) {
-    const und = checkUndefined(jsonData, ["id", "beatmaps"]);
+    // Check if required fields are present in the JSON response
+    const und = Util.checkUndefined(jsonData, ["id", "beatmaps"]);
     if (und) {
       throw new OcdlError("CORRUPTED_RESPONSE", `${und} is required`);
     }
 
+    // Destructure the JSON data and assign to object properties
     const { id, beatmaps } = jsonData as v1ResBeatMapSetType;
     this.id = id;
     this.beatMaps = this._resolveBeatMaps(beatmaps);
   }
 
-  private _resolveBeatMaps(jsonBeatMaps: v1ResBeatMapType[]): Map<number, BeatMap> {
+  // Returns the title with forbidden characters replaced, or null if title is not present
+  getReplacedName(): string | null {
+    if (!this.title) {
+      return null;
+    }
+    return Util.replaceForbiddenChars(this.title);
+  }
+
+  // Helper function to create a Map of beatmap IDs to BeatMap objects from JSON data
+  private _resolveBeatMaps(
+    jsonBeatMaps: v1ResBeatMapType[]
+  ): Map<number, BeatMap> {
     return jsonBeatMaps.reduce((acc, current) => {
       try {
         const map = new BeatMap(current);

@@ -2,13 +2,14 @@ import { createWriteStream, existsSync, readdirSync, unlinkSync } from "fs";
 import { Response } from "undici";
 import _path from "path";
 import OcdlError from "../struct/OcdlError";
-import { replaceForbiddenChars } from "../util";
+import Util from "../util";
 import EventEmitter from "events";
 import { BeatMapSet } from "../struct/BeatMapSet";
-import { collection, config } from "../state";
+import Manager from "./Manager";
 import PQueue from "p-queue";
 import { Requestor } from "./Requestor";
 import { Mirror, getFallbackMirrors } from "../struct/Constant";
+import ProxyManager from "./ProxyManager";
 
 interface DownloadManagerEvents {
   downloaded: (beatMapSet: BeatMapSet) => void;
@@ -35,51 +36,54 @@ export declare interface DownloadManager {
   ): boolean;
 }
 
-// Download manager with parallel downloading and rate limiting support
 export class DownloadManager extends EventEmitter {
   path: string;
-  private queue: PQueue;  // Queue for managing parallel downloads
-  private downloadedBeatMapSetSize = 0;  // Downloaded beatmapsets counter
-  private skippedBeatMapSetSize = 0;  // Skipped (already existing) beatmapsets counter
-  private existingBeatmapsetIds: Set<number> | null = null;  // Cached existing beatmapset IDs in Songs
-  private remainingDownloadsLimit: number | null;  // Remaining downloads limit
-  private lastDownloadsLimitCheck: number | null = null;  // Last limit check timestamp
-  private testRequest = false;  // Flag for test request after rate limit
-  private bannedMirrors: Set<Mirror> = new Set();  // Mirrors that returned 403 (blocked)
+  private queue: PQueue;
+  private downloadedBeatMapSetSize = 0;
+  private skippedBeatMapSetSize = 0;
+  private existingBeatmapsetIds: Set<number> | null = null;
+  private remainingDownloadsLimit: number | null;
+  private lastDownloadsLimitCheck: number | null = null;
+  private testRequest = false;
+  private bannedMirrors: Set<Mirror> = new Set();
 
   constructor(remainingDownloadsLimit: number | null) {
     super();
 
     this.remainingDownloadsLimit = remainingDownloadsLimit;
 
-    // Determine path for saving files
-    if (config.mode === 4) {
-      // Mode 4: download directly to Songs folder
-      this.path = config.songsPath;
+    if (Manager.config.mode === 4) {
+      this.path = Manager.config.songsPath;
     } else {
-      // Modes 1-3: download to directory, into collection subfolder
-      this.path = config.useSubfolder
-        ? _path.join(config.directory, collection.getCollectionFolderName())
-        : config.directory;
+      this.path = Manager.config.useSubfolder
+        ? _path.join(
+            Manager.config.directory,
+            Manager.collection.getCollectionFolderName()
+          )
+        : Manager.config.directory;
     }
 
-    // Initialize queue with parallelism and rate limiting settings
-    // Nerinyan and Sayobot have no rate limit, skip intervalCap for them
-    const noRateLimit = config.mirror === Mirror.Nerinyan || config.mirror === Mirror.Sayobot || config.mirror === Mirror.Beatconnect || config.mirror === Mirror.Nekoha;
-    this.queue = !noRateLimit
+    // Mirrors without rate limiting skip intervalCap
+    const noRateLimit =
+      Manager.config.mirror === Mirror.Nerinyan ||
+      Manager.config.mirror === Mirror.Sayobot ||
+      Manager.config.mirror === Mirror.Beatconnect ||
+      Manager.config.mirror === Mirror.Nekoha;
+
+    this.queue = noRateLimit
       ? new PQueue({
-          concurrency: config.parallel ? config.concurrency : 1,
-          intervalCap: config.intervalCap,
-          interval: 60e3,  // 60 seconds
+          concurrency: Manager.config.parallel ? Manager.config.concurrency : 1,
         })
       : new PQueue({
-          concurrency: config.parallel ? config.concurrency : 1,
+          concurrency: Manager.config.parallel ? Manager.config.concurrency : 1,
+          intervalCap: Manager.config.intervalCap,
+          interval: 60e3,
         });
   }
 
   public bulkDownload(): void {
-    // Build set of existing beatmapset IDs in Songs folder for skip check
-    if (config.skipExisting && existsSync(this.path)) {
+    // Pre-populate existing beatmapset IDs for skip check
+    if (Manager.config.skipExisting && existsSync(this.path)) {
       this.existingBeatmapsetIds = new Set<number>();
       try {
         const entries = readdirSync(this.path);
@@ -94,22 +98,19 @@ export class DownloadManager extends EventEmitter {
       }
     }
 
-    collection.beatMapSets.forEach((beatMapSet) => {
+    Manager.collection.beatMapSets.forEach((beatMapSet) => {
       void this.queue.add(async () => {
-        // Skip if beatmapset already exists in Songs
         if (this.existingBeatmapsetIds?.has(beatMapSet.id)) {
           this.skippedBeatMapSetSize++;
           this.downloadedBeatMapSetSize++;
           this.emit("skipped", beatMapSet);
-          collection.beatMapSets.delete(beatMapSet.id);
+          Manager.collection.beatMapSets.delete(beatMapSet.id);
           return;
         }
 
         const success = await this._downloadFile(beatMapSet);
-        // Remove beatmap only if download successful
-        // (in mode 4 collection.db is already updated at start from API)
         if (success) {
-          collection.beatMapSets.delete(beatMapSet.id);
+          Manager.collection.beatMapSets.delete(beatMapSet.id);
         }
       });
     });
@@ -144,15 +145,22 @@ export class DownloadManager extends EventEmitter {
     beatMapSet: BeatMapSet,
     options: { remainingMirrors?: Mirror[] } = {}
   ): Promise<boolean> {
-    // Determine current mirror and remaining fallbacks, excluding banned mirrors
     let allMirrors: Mirror[];
     if (options.remainingMirrors !== undefined) {
-      allMirrors = options.remainingMirrors.filter(m => !this.bannedMirrors.has(m));
+      allMirrors = options.remainingMirrors.filter(
+        (m) => !this.bannedMirrors.has(m)
+      );
     } else {
-      // First attempt: start with config mirror, then fallbacks
-      allMirrors = this.bannedMirrors.has(config.mirror)
-        ? getFallbackMirrors(config.mirror).filter(m => !this.bannedMirrors.has(m))
-        : [config.mirror, ...getFallbackMirrors(config.mirror).filter(m => !this.bannedMirrors.has(m))];
+      allMirrors = this.bannedMirrors.has(Manager.config.mirror)
+        ? getFallbackMirrors(Manager.config.mirror).filter(
+            (m) => !this.bannedMirrors.has(m)
+          )
+        : [
+            Manager.config.mirror,
+            ...getFallbackMirrors(Manager.config.mirror).filter(
+              (m) => !this.bannedMirrors.has(m)
+            ),
+          ];
     }
 
     if (allMirrors.length === 0) {
@@ -188,25 +196,40 @@ export class DownloadManager extends EventEmitter {
         mirror: currentMirror,
       });
 
-      // Rate limit check only for Catboy and OsuDirect (Nerinyan and Sayobot don't have this limit)
-      if (currentMirror !== Mirror.Nerinyan && currentMirror !== Mirror.Sayobot && currentMirror !== Mirror.Beatconnect && currentMirror !== Mirror.Nekoha) {
+      // Rate limit check only for mirrors that track it
+      if (
+        currentMirror !== Mirror.Nerinyan &&
+        currentMirror !== Mirror.Sayobot &&
+        currentMirror !== Mirror.Beatconnect &&
+        currentMirror !== Mirror.Nekoha
+      ) {
         const xRateLimit = response.headers.get("x-ratelimit-remaining");
-        if (xRateLimit && parseInt(xRateLimit) <= 12) {
-          if (!this.queue.isPaused) {
-            this.emit("rateLimited");
+        if (xRateLimit) {
+          const limit = parseInt(xRateLimit);
+          const pm = ProxyManager.instance;
+          if (pm.isAvailable && pm.activeIndex >= 0) {
+            pm.updateCachedLimit(pm.activeIndex, limit);
+          }
+          if (limit <= 12) {
+            if (!this.queue.isPaused) {
+              this.emit("rateLimited");
+            }
           }
         }
       }
 
       if (response.status === 429) {
-        // For Nerinyan/Sayobot: no rate limit pause, just retry on same mirror
-        if (currentMirror === Mirror.Nerinyan || currentMirror === Mirror.Sayobot || currentMirror === Mirror.Beatconnect || currentMirror === Mirror.Nekoha) {
+        if (
+          currentMirror === Mirror.Nerinyan ||
+          currentMirror === Mirror.Sayobot ||
+          currentMirror === Mirror.Beatconnect ||
+          currentMirror === Mirror.Nekoha
+        ) {
           // eslint-disable-next-line @typescript-eslint/no-floating-promises
           this.queue.add(async () => await this._downloadFile(beatMapSet, options));
           return false;
         }
 
-        // For Catboy/OsuDirect: check daily limit and pause queue
         if (isProbeRequest) {
           if (
             !this.lastDownloadsLimitCheck ||
@@ -229,15 +252,12 @@ export class DownloadManager extends EventEmitter {
         this.queue.add(async () => await this._downloadFile(beatMapSet, options));
         return false;
       } else if (response.status === 403 || response.status === 451) {
-        // Ban this mirror from future requests on 403
         if (response.status === 403) {
           this.bannedMirrors.add(currentMirror);
         }
-        // If there are fallback mirrors left, try next one instead of stopping
         if (nextMirrors.length > 0) {
           throw `Status Code: ${response.status}`;
         }
-        // All mirrors exhausted — stop
         if (response.status === 403) {
           this.emit("blocked", this.getNotDownloadedBeatapSets());
         } else {
@@ -249,14 +269,15 @@ export class DownloadManager extends EventEmitter {
       }
 
       if (isProbeRequest) {
-        this.queue.concurrency = config.parallel ? config.concurrency : 1;
+        this.queue.concurrency = Manager.config.parallel
+          ? Manager.config.concurrency
+          : 1;
       }
 
       const fileName = this._getFilename(response);
       const filePath = _path.join(this.path, fileName);
       const file = createWriteStream(filePath);
 
-      // Write file in chunks
       let bytesWritten = 0;
       if (response.body) {
         for await (const chunk of response.body) {
@@ -267,15 +288,15 @@ export class DownloadManager extends EventEmitter {
         throw "res.body is null";
       }
 
-      // Wait for the stream to fully flush to disk
       await new Promise<void>((resolve, reject) => {
         file.end(() => resolve());
         file.on("error", reject);
       });
 
-      // Validate file size — .osz is a zip archive, valid files are at least a few KB
       if (bytesWritten < 1024) {
-        try { unlinkSync(filePath); } catch { /* ignore */ }
+        try {
+          unlinkSync(filePath);
+        } catch { /* ignore */ }
         throw `Downloaded file is too small (${bytesWritten} bytes)`;
       }
 
@@ -294,13 +315,12 @@ export class DownloadManager extends EventEmitter {
           const success = await this._downloadFile(beatMapSet, {
             remainingMirrors: nextMirrors,
           });
-          // Remove beatmap only if retry successful
           if (success) {
-            collection.beatMapSets.delete(beatMapSet.id);
+            Manager.collection.beatMapSets.delete(beatMapSet.id);
           }
         });
       } else {
-        // All mirrors exhausted - beatmap stays in collection for missing log
+        Manager.collection.beatMapSets.set(beatMapSet.id, beatMapSet);
         this.emit("error", beatMapSet, e);
       }
 
@@ -311,7 +331,7 @@ export class DownloadManager extends EventEmitter {
   }
 
   public getNotDownloadedBeatapSets(): BeatMapSet[] {
-    return Array.from(collection.beatMapSets.values());
+    return Array.from(Manager.collection.beatMapSets.values());
   }
 
   private _getFilename(response: Response): string {
@@ -322,7 +342,7 @@ export class DownloadManager extends EventEmitter {
       const result = /filename=([^;]+)/g.exec(contentDisposition);
       if (result) {
         try {
-          fileName = replaceForbiddenChars(decodeURIComponent(result[1]));
+          fileName = Util.replaceForbiddenChars(decodeURIComponent(result[1]));
         } catch (e) {
           throw new OcdlError("FILE_NAME_EXTRACTION_FAILED", e);
         }

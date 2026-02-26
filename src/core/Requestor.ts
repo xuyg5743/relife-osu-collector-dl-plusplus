@@ -1,10 +1,31 @@
-import { Response, fetch, request } from "undici";
-import { Constant, Mirror, MirrorUrls, getCatboyDownloadUrl, getCatboyRateLimitUrl } from "../struct/Constant";
+import { Response, fetch, request, ProxyAgent } from "undici";
+import {
+  Constant,
+  Mirror,
+  MirrorUrls,
+  getCatboyDownloadUrl,
+  getCatboyRateLimitUrl,
+} from "../struct/Constant";
 import { Json, Mode } from "../types";
 import OcdlError from "../struct/OcdlError";
 import { CollectionId } from "../struct/Collection";
 import { LIB_VERSION } from "../version";
-import { config } from "../state";
+import Manager from "./Manager";
+import ProxyManager from "./ProxyManager";
+
+function getDispatcher() {
+  const pm = ProxyManager.instance;
+  if (pm.isAvailable && pm.activeIndex >= 0) {
+    const dispatcher = pm.getDispatcher();
+    if (dispatcher) return dispatcher;
+  }
+
+  const proxyUrl = Manager.config.proxy;
+  if (proxyUrl) {
+    return new ProxyAgent(proxyUrl);
+  }
+  return undefined;
+}
 
 interface FetchCollectionQuery {
   perPage?: number;
@@ -58,27 +79,65 @@ export interface v2ResBeatMapSetType extends Json {
   artist: string;
 }
 
+// Tournament data types
+export interface TournamentBeatMapSet {
+  id: number;
+  artist: string;
+  title: string;
+}
+
+export interface TournamentBeatMap {
+  id: number;
+  checksum: string;
+  difficulty_rating: number;
+  version: string;
+  mode: Mode;
+  beatmapset: TournamentBeatMapSet;
+}
+
+export interface TournamentModGroup {
+  mod: string;
+  maps: TournamentBeatMap[];
+}
+
+export interface TournamentRound {
+  mods: TournamentModGroup[];
+  round: string;
+}
+
+export interface TournamentResponse {
+  id: number;
+  name: string;
+  description?: string;
+  uploader?: {
+    id: number;
+    username: string;
+  };
+  rounds: TournamentRound[];
+}
+
 export class Requestor {
   static async fetchDownloadCollection(
     id: CollectionId,
     options: DownloadCollectionOptions = {}
   ): Promise<Response> {
-    const mirror = options.mirror ?? config.mirror;
-    // For Catboy, use the selected server's base URL
-    const mirrorBaseUrl = mirror === Mirror.Catboy
-      ? getCatboyDownloadUrl(config.catboyServer)
-      : MirrorUrls[mirror];
+    const mirror = options.mirror ?? Manager.config.mirror;
+    const mirrorBaseUrl =
+      mirror === Mirror.Catboy
+        ? getCatboyDownloadUrl(Manager.config.catboyServer)
+        : MirrorUrls[mirror];
     const baseUrl = mirrorBaseUrl + id.toString();
 
-    // Add noVideo parameter for mirrors that support it
-    // Sayobot already has novideo in the URL path
-    const url = mirror === Mirror.Nerinyan || mirror === Mirror.Catboy
-      ? baseUrl + "?noVideo=1"
-      : baseUrl;
+    // noVideo param for mirrors that support it; Sayobot has novideo in path already
+    const url =
+      mirror === Mirror.Nerinyan || mirror === Mirror.Catboy
+        ? baseUrl + "?noVideo=1"
+        : baseUrl;
 
     const res = await fetch(url, {
       headers: { "User-Agent": `osu-collector-dl/v${LIB_VERSION}` },
       method: "GET",
+      dispatcher: getDispatcher(),
     });
     return res;
   }
@@ -88,24 +147,18 @@ export class Requestor {
     options: FetchCollectionOptions = { v2: false }
   ): Promise<Json> {
     const { v2, cursor } = options;
-    // Use different endpoint for different version of api request
     const url =
       Constant.OsuCollectorApiUrl + id.toString() + (v2 ? "/beatmapsV2" : "");
 
-    const query: FetchCollectionQuery = // Query is needed for V2 collection
-      v2
-        ? {
-            perPage: 100,
-            cursor, // Cursor which point to the next page
-          }
-        : {};
+    const query: FetchCollectionQuery = v2
+      ? { perPage: 100, cursor }
+      : {};
 
-    const data = await request(url, { method: "GET", query })
+    const data = await request(url, { method: "GET", query, dispatcher: getDispatcher() })
       .then(async (res) => {
         if (res.statusCode !== 200) {
           throw `Status code: ${res.statusCode}`;
         }
-
         return (await res.body.json()) as Json;
       })
       .catch((e: unknown) => {
@@ -120,18 +173,67 @@ export class Requestor {
   }
 
   static async checkRateLimitation(): Promise<number | null> {
-    const rateLimitUrl = getCatboyRateLimitUrl(config.catboyServer);
+    const rateLimitUrl = getCatboyRateLimitUrl(Manager.config.catboyServer);
     const res = await request(rateLimitUrl, {
       method: "GET",
       headers: { "User-Agent": `osu-collector-dl/v${LIB_VERSION}` },
+      dispatcher: getDispatcher(),
     });
 
     if (!res || res.statusCode !== 200) return null;
     const data = (await res.body.json().catch(() => null)) as Json | null;
     if (!data) return null;
 
-    // Return remaining beatmaps that can be request to download
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
     return ((data as any).daily?.remaining?.downloads ?? null) as number | null;
+  }
+
+  static async checkNewVersion(
+    current_version: string
+  ): Promise<string | null> {
+    if (current_version === "Unknown") return null;
+
+    const res = await request(Constant.GithubReleaseApiUrl, {
+      method: "GET",
+      headers: {
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": `osu-collector-dl/v${current_version}`,
+      },
+      query: { per_page: 1 },
+      dispatcher: getDispatcher(),
+    }).catch(() => null);
+
+    if (!res || res.statusCode !== 200) return null;
+    const data = (await res.body.json().catch(() => null)) as Json[] | null;
+    if (!data) return null;
+
+    const version = data[0].tag_name as string;
+    if (version === "v" + current_version) return null;
+    return version;
+  }
+
+  static async fetchTournament(id: number): Promise<TournamentResponse> {
+    const url = Constant.OsuCollectorTournamentApiUrl + id.toString();
+
+    const res = await request(url, {
+      method: "GET",
+      headers: { "User-Agent": `osu-collector-dl/v${LIB_VERSION}` },
+      dispatcher: getDispatcher(),
+    }).catch(() => null);
+
+    if (!res || res.statusCode !== 200) {
+      throw new OcdlError(
+        "REQUEST_DATA_FAILED",
+        `Status code: ${res?.statusCode ?? "Unknown"}`
+      );
+    }
+
+    const data = (await res.body.json().catch(() => null)) as Json | null;
+    if (!data) {
+      throw new OcdlError("REQUEST_DATA_FAILED", "Empty tournament response");
+    }
+
+    return data as unknown as TournamentResponse;
   }
 }

@@ -8,49 +8,29 @@ interface OsuDbBeatmap {
 }
 
 /**
- * Reads osu!.db and extracts mapping md5Hash -> beatmapId
+ * Reads osu!.db and extracts beatmap hashes and IDs.
  * Format: https://osu.ppy.sh/wiki/en/Client/File_formats/osu!.db
  */
 export default class OsuDbReader {
   private filePath: string;
   private buffer: Buffer = Buffer.alloc(0);
-  private offset: number = 0;
-  private version: number = 0;
+  private offset = 0;
+  private version = 0;
 
   constructor(osuDbPath: string) {
     this.filePath = osuDbPath;
   }
 
-  /**
-   * Reads osu!.db and returns mapping md5Hash -> beatmapId
-   */
-  read(): Map<string, number> {
-    const { hashToBeatmapId } = this.parse();
-    return hashToBeatmapId;
-  }
-
-  /**
-   * Reads osu!.db and returns mapping beatmapId -> md5Hash
-   * Used for replacing API hashes with real hashes
-   */
   readBeatmapIdToHash(): Map<number, string> {
     const { beatmapIdToHash } = this.parse();
     return beatmapIdToHash;
   }
 
-  /**
-   * Reads osu!.db and returns Set of all md5 hashes
-   * Used to check which beatmaps are already downloaded
-   */
   readAllHashes(): Set<string> {
     const { allHashes } = this.parse();
     return allHashes;
   }
 
-  /**
-   * Reads osu!.db and returns Set of all beatmapsetIds
-   * Used to check which beatmapsets are already downloaded
-   */
   readAllBeatmapsetIds(): Set<number> {
     const { beatmapsetIds } = this.parse();
     return beatmapsetIds;
@@ -75,25 +55,14 @@ export default class OsuDbReader {
     const allHashes = new Set<string>();
 
     try {
-      // Version (Int)
       this.version = this.readInt();
+      this.readInt(); // Folder count
+      this.readBool(); // Account unlocked
+      this.offset += 8; // Date account unlocked (DateTime)
+      this.readString(); // Player name
 
-      // Folder count (Int)
-      this.readInt();
-
-      // Account unlocked (Bool)
-      this.readBool();
-
-      // Date account unlocked (DateTime - 8 bytes)
-      this.offset += 8;
-
-      // Player name (String)
-      this.readString();
-
-      // Number of beatmaps (Int)
       const beatmapCount = this.readInt();
 
-      // Read beatmaps
       for (let i = 0; i < beatmapCount; i++) {
         const beatmap = this.readBeatmap();
         if (beatmap && beatmap.md5Hash) {
@@ -116,200 +85,83 @@ export default class OsuDbReader {
 
   private readBeatmap(): OsuDbBeatmap | null {
     try {
-      // Size in bytes (Int) - only for version < 20191106
-      if (this.version < 20191106) {
-        this.readInt();
-      }
+      if (this.version < 20191106) this.readInt(); // Size in bytes
 
-      // Artist name (String)
-      this.readString();
+      this.readString(); // Artist name
+      this.readString(); // Artist name unicode
+      this.readString(); // Song title
+      this.readString(); // Song title unicode
+      this.readString(); // Creator name
+      this.readString(); // Difficulty
+      this.readString(); // Audio file name
 
-      // Artist name unicode (String)
-      this.readString();
-
-      // Song title (String)
-      this.readString();
-
-      // Song title unicode (String)
-      this.readString();
-
-      // Creator name (String)
-      this.readString();
-
-      // Difficulty (String)
-      this.readString();
-
-      // Audio file name (String)
-      this.readString();
-
-      // MD5 hash (String)
       const md5Hash = this.readString();
 
-      // .osu file name (String)
-      this.readString();
+      this.readString(); // .osu file name
+      this.readByte(); // Ranked status
+      this.readShort(); // Number of hitcircles
+      this.readShort(); // Number of sliders
+      this.readShort(); // Number of spinners
+      this.offset += 8; // Last modification time (Long)
 
-      // Ranked status (Byte)
-      this.readByte();
-
-      // Number of hitcircles (Short)
-      this.readShort();
-
-      // Number of sliders (Short)
-      this.readShort();
-
-      // Number of spinners (Short)
-      this.readShort();
-
-      // Last modification time (Long)
-      this.offset += 8;
-
-      // Approach rate (Single/Byte depending on version)
       if (this.version < 20140609) {
-        this.readByte();
+        this.readByte(); // AR
+        this.readByte(); // CS
+        this.readByte(); // HP
+        this.readByte(); // OD
       } else {
-        this.readSingle();
+        this.readSingle(); // AR
+        this.readSingle(); // CS
+        this.readSingle(); // HP
+        this.readSingle(); // OD
       }
 
-      // Circle size (Single/Byte)
-      if (this.version < 20140609) {
-        this.readByte();
-      } else {
-        this.readSingle();
-      }
+      this.readDouble(); // Slider velocity
 
-      // HP drain (Single/Byte)
-      if (this.version < 20140609) {
-        this.readByte();
-      } else {
-        this.readSingle();
-      }
-
-      // Overall difficulty (Single/Byte)
-      if (this.version < 20140609) {
-        this.readByte();
-      } else {
-        this.readSingle();
-      }
-
-      // Slider velocity (Double)
-      this.readDouble();
-
-      // Star rating for osu! standard (Int-Double pairs)
       if (this.version >= 20140609) {
-        this.readIntDoublePairs();
+        this.readIntDoublePairs(); // Star rating osu!
+        this.readIntDoublePairs(); // Star rating Taiko
+        this.readIntDoublePairs(); // Star rating CTB
+        this.readIntDoublePairs(); // Star rating Mania
       }
 
-      // Star rating for Taiko
-      if (this.version >= 20140609) {
-        this.readIntDoublePairs();
-      }
+      this.readInt(); // Drain time
+      this.readInt(); // Total time
+      this.readInt(); // Audio preview time
 
-      // Star rating for CTB
-      if (this.version >= 20140609) {
-        this.readIntDoublePairs();
-      }
-
-      // Star rating for Mania
-      if (this.version >= 20140609) {
-        this.readIntDoublePairs();
-      }
-
-      // Drain time (Int)
-      this.readInt();
-
-      // Total time (Int)
-      this.readInt();
-
-      // Audio preview time (Int)
-      this.readInt();
-
-      // Timing points
       const timingPointCount = this.readInt();
-      // Each timing point: Double + Double + Bool = 17 bytes
-      this.offset += timingPointCount * 17;
+      this.offset += timingPointCount * 17; // Each timing point: Double + Double + Bool
 
-      // Beatmap ID (Int)
       const beatmapId = this.readInt();
-
-      // Beatmapset ID (Int)
       const beatmapsetId = this.readInt();
 
-      // Thread ID (Int)
-      this.readInt();
+      this.readInt(); // Thread ID
+      this.readByte(); // Grade osu!
+      this.readByte(); // Grade Taiko
+      this.readByte(); // Grade CTB
+      this.readByte(); // Grade Mania
+      this.readShort(); // Local offset
+      this.readSingle(); // Stack leniency
+      this.readByte(); // Game mode
+      this.readString(); // Song source
+      this.readString(); // Song tags
+      this.readShort(); // Online offset
+      this.readString(); // Font
+      this.readBool(); // Unplayed
+      this.offset += 8; // Last played time (Long)
+      this.readBool(); // Is osz2
+      this.readString(); // Folder name
+      this.offset += 8; // Last checked against repo (Long)
+      this.readBool(); // Ignore beatmap sound
+      this.readBool(); // Ignore beatmap skin
+      this.readBool(); // Disable storyboard
+      this.readBool(); // Disable video
+      this.readBool(); // Visual override
 
-      // Grade osu! (Byte)
-      this.readByte();
+      if (this.version < 20140609) this.readShort(); // Unknown
 
-      // Grade Taiko (Byte)
-      this.readByte();
-
-      // Grade CTB (Byte)
-      this.readByte();
-
-      // Grade Mania (Byte)
-      this.readByte();
-
-      // Local offset (Short)
-      this.readShort();
-
-      // Stack leniency (Single)
-      this.readSingle();
-
-      // Game mode (Byte)
-      this.readByte();
-
-      // Song source (String)
-      this.readString();
-
-      // Song tags (String)
-      this.readString();
-
-      // Online offset (Short)
-      this.readShort();
-
-      // Font (String)
-      this.readString();
-
-      // Unplayed (Bool)
-      this.readBool();
-
-      // Last played time (Long)
-      this.offset += 8;
-
-      // Is osz2 (Bool)
-      this.readBool();
-
-      // Folder name (String)
-      this.readString();
-
-      // Last checked against repo (Long)
-      this.offset += 8;
-
-      // Ignore beatmap sound (Bool)
-      this.readBool();
-
-      // Ignore beatmap skin (Bool)
-      this.readBool();
-
-      // Disable storyboard (Bool)
-      this.readBool();
-
-      // Disable video (Bool)
-      this.readBool();
-
-      // Visual override (Bool)
-      this.readBool();
-
-      // Unknown (Short) - only for version < 20140609
-      if (this.version < 20140609) {
-        this.readShort();
-      }
-
-      // Last modification time (Int)
-      this.readInt();
-
-      // Mania scroll speed (Byte)
-      this.readByte();
+      this.readInt(); // Last modification time
+      this.readByte(); // Mania scroll speed
 
       return { beatmapId, beatmapsetId, md5Hash };
     } catch {
@@ -353,20 +205,14 @@ export default class OsuDbReader {
 
   private readString(): string {
     const indicator = this.readByte();
-
-    if (indicator === 0x00) {
-      return "";
-    }
-
+    if (indicator === 0x00) return "";
     if (indicator !== 0x0b) {
       throw new Error(`Invalid string indicator: ${indicator}`);
     }
 
-    // Read ULEB128 length
     let length = 0;
     let shift = 0;
     let byte = 0;
-
     do {
       byte = this.readByte();
       length |= (byte & 0x7f) << shift;
@@ -375,14 +221,13 @@ export default class OsuDbReader {
 
     const str = this.buffer.toString("utf-8", this.offset, this.offset + length);
     this.offset += length;
-
     return str;
   }
 
   private readIntDoublePairs(): void {
     const count = this.readInt();
-    // Version >= 20250107: Int-Float pairs (0x08 + Int(4) + 0x0c + Float(4) = 10 bytes)
-    // Version < 20250107: Int-Double pairs (0x08 + Int(4) + 0x0d + Double(8) = 14 bytes)
+    // Version >= 20250107: Int-Float pairs (10 bytes each)
+    // Version < 20250107: Int-Double pairs (14 bytes each)
     const bytesPerPair = this.version >= 20250107 ? 10 : 14;
     this.offset += count * bytesPerPair;
   }

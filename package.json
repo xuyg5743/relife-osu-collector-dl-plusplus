@@ -1,7 +1,8 @@
 {
   "name": "osu-collector-dl",
-  "version": "2.8.0",
+  "version": "2.7.11",
   "main": "./dist/index.js",
+  "bin": "./dist/index.js",
   "scripts": {
     "build": "yarn run clean-folder && yarn run build-app && yarn run cp-build",
     "start": "yarn build-ts && node .",
@@ -10,8 +11,8 @@
     "prettier": "prettier --write \"**/*.{ts,json,yml,yaml,md}\"",
     "prebuild-ts": "node -p \"'export const LIB_VERSION = ' + JSON.stringify(require('./package.json').version) + ';'\" > src/version.ts",
     "build-ts": "yarn prebuild-ts && tsc -p .",
-    "build-app-win": "yarn build-ts && pkg -t node16-win -o ./build/win-x64/osu-collector-dl.exe ./dist/index.js --public",
-    "build-app-linux": "yarn build-ts && pkg -t node16-linux -o ./build/linux-arm64/osu-collector-dl ./dist/index.js --public",
+    "build-app-win": "yarn build-ts && pkg -t node16-win -o ./build/win-x64/osu-collector-dl.exe . --public",
+    "build-app-linux": "yarn build-ts && pkg -t node16-linux -o ./build/linux-arm64/osu-collector-dl . --public",
     "build-app": "yarn build-app-win && yarn build-app-linux",
     "cp-build-win": "cp ./{LICENSE,README.md} ./build/win-x64/ && cp ./config.json.example ./build/win-x64/config.json",
     "cp-build-linux": "cp ./{LICENSE,README.md} ./build/linux-arm64/ && cp ./config.json.example ./build/linux-arm64/config.json",
@@ -24,6 +25,7 @@
     "csbinary": "^2.1.4",
     "p-queue": "6.6.2",
     "prompt-sync": "^4.2.0",
+    "tslib": "^2.4.1",
     "undici": "5.28.5"
   },
   "devDependencies": {
@@ -36,8 +38,15 @@
     "eslint-plugin-import": "^2.25.2",
     "eslint-plugin-n": "^15.0.0",
     "eslint-plugin-promise": "^6.0.0",
+    "pkg": "^5.8.1",
     "prettier": "^2.8.3",
     "typescript": "^4.9.4"
+  },
+  "pkg": {
+    "assets": [
+      "bin/xray.exe",
+      "bin/xray"
+    ]
   },
   "packageManager": "yarn@3.2.1"
 }

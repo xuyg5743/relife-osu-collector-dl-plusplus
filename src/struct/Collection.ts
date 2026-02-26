@@ -1,6 +1,6 @@
 import OcdlError from "./OcdlError";
 import { BeatMapSet, BeatMapSetId } from "./BeatMapSet";
-import { checkUndefined, replaceForbiddenChars } from "../util";
+import Util from "../util";
 import { Json, ModeByte } from "../types";
 import {
   v1ResBeatMapSetType,
@@ -16,19 +16,22 @@ export class Collection {
   beatMapCount = 0;
   id: CollectionId = 0;
   name = "Unknown";
-  uploader: { username: string } = { username: "Unknown" };
+  uploader: {
+    username: string;
+  } = {
+    username: "Unknown",
+  };
 
-  reset(): void {
-    this.beatMapSets = new Map();
-    this.beatMapSetCount = 0;
-    this.beatMapCount = 0;
-    this.id = 0;
-    this.name = "Unknown";
-    this.uploader = { username: "Unknown" };
-  }
-
+  // Populates the Collection instance with data from the given jsonData object
   resolveData(jsonData: Json = {}) {
-    const und = checkUndefined(jsonData, ["id", "name", "uploader", "beatmapsets"]);
+    // Check for required fields in the jsonData object
+    const und = Util.checkUndefined(jsonData, [
+      "id",
+      "name",
+      "uploader",
+      "beatmapsets",
+    ]);
+    // Throw an OcdlError if a required field is not present in the jsonData object
     if (und) {
       throw new OcdlError("CORRUPTED_RESPONSE", `${und} is required`);
     }
@@ -38,34 +41,40 @@ export class Collection {
     this.id = id;
     this.name = name;
     this.uploader = uploader;
-    // Parse beatmapsets and count beatmaps in one pass
-    const { beatMapSets, beatMapCount } = this._resolveBeatMapSets(beatmapsets);
-    this.beatMapSets = beatMapSets;
-    this.beatMapSetCount = beatMapSets.size;
-    this.beatMapCount = beatMapCount;
+    this.beatMapSets = this._resolveBeatMapSets(beatmapsets);
+    this.beatMapSetCount = this.beatMapSets.size;
+    this.beatMapCount = this._getBeatMapCount(beatmapsets);
   }
 
+  // Returns a sanitized version of the Collection's name with any forbidden characters replaced
   getCollectionName(): string {
-    return replaceForbiddenChars(this.name).trim();
+    return Util.replaceForbiddenChars(this.name).trim();
   }
 
+  // Adds collection id in front to prevent unintentional overrides of folder with same name
   getCollectionFolderName(): string {
-    return this.id.toString() + " - " + this.getCollectionName();
+    const collectionName = this.getCollectionName();
+    return this.id.toString() + " - " + collectionName; // Folder name example: 44 - speed practice
   }
 
+  // Populates the beatMapSet and beatMap instances within the Collection with data from the given data array
   resolveFullData(jsonBeatMaps: v2ResBeatMapType[]): void {
+    // Throw an OcdlError if the data array is empty
     if (!jsonBeatMaps.length) {
       throw new OcdlError("CORRUPTED_RESPONSE", "No beatmap found");
     }
 
+    // Iterate through each element in the data array
     for (const data of jsonBeatMaps) {
-      const und = checkUndefined(data, [
+      // Check for required fields in the current element of the data array
+      const und = Util.checkUndefined(data, [
         "id",
         "mode",
         "difficulty_rating",
         "version",
         "beatmapset",
       ]);
+      // Throw an OcdlError if a required field is not present in the current element of the data array
       if (und) {
         throw new OcdlError("CORRUPTED_RESPONSE", `${und} is required`);
       }
@@ -73,38 +82,48 @@ export class Collection {
       const { id, mode, difficulty_rating, version, beatmapset } = data;
 
       const beatMapSet = this.beatMapSets.get(beatmapset.id);
+      // Continue to the next iteration if the BeatMapSet instance was not found
       if (!beatMapSet) continue;
 
-      beatMapSet.title = beatmapset.title;
-      beatMapSet.artist = beatmapset.artist;
+      const { title, artist } = beatmapset;
+
+      beatMapSet.title = title;
+      beatMapSet.artist = artist;
 
       const beatMap = beatMapSet.beatMaps.get(id);
+      // Continue to the next iteration if the beatMap instance was not found
       if (!beatMap) continue;
 
       beatMap.difficulty_rating = difficulty_rating;
+      // Convert the mode field from a string to a number using the ModeByte object
       beatMap.mode = +ModeByte[mode];
       beatMap.version = version;
     }
   }
 
-  // Parse beatmapsets with beatmaps count in single array pass
-  // Optimization: avoid double iteration over array
+  // Returns a Map of beatmap set id to BeatMapSet instance, constructed from the given beatMapSetJson array
   private _resolveBeatMapSets(
     jsonBeatMapSets: v1ResBeatMapSetType[]
-  ): { beatMapSets: Map<number, BeatMapSet>; beatMapCount: number } {
-    let beatMapCount = 0;
-    const beatMapSets = new Map<number, BeatMapSet>();
-
-    for (const current of jsonBeatMapSets) {
+  ): Map<number, BeatMapSet> {
+    // Reduce the beatMapSetJson array to a Map, adding a new entry for each element in the array
+    return jsonBeatMapSets.reduce((acc, current) => {
       try {
         const map = new BeatMapSet(current);
-        beatMapSets.set(map.id, map);
-        beatMapCount += current.beatmaps.length;
+        // Add an entry to the Map with the id of the BeatMapSet instance as the key and the instance as the value
+        acc.set(map.id, map);
+        return acc;
       } catch (e) {
         throw new OcdlError("CORRUPTED_RESPONSE", e);
       }
-    }
+    }, new Map<number, BeatMapSet>());
+  }
 
-    return { beatMapSets, beatMapCount };
+  // Reduce the beatMapSetJson array to the number of beatmaps.
+  // This alternative method is used because the response from osu!Collector API is not always accurate
+  private _getBeatMapCount(jsonBeatMapSets: v1ResBeatMapSetType[]): number {
+    return jsonBeatMapSets.reduce((acc, current) => {
+      const length = current.beatmaps.length;
+      return acc + length;
+    }, 0);
   }
 }

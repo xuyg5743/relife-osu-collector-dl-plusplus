@@ -1,7 +1,3 @@
-# Claude
-.claude/
-CLAUDE.md
-
 #beatmap
 *.osz
 *.osdb
@@ -124,6 +120,17 @@ build/
 
 #config.json
 config.json
+
+#vless
+vless.txt
+
+#xray-core files
+xray
+xray.exe
+geoip.dat
+geosite.dat
+wintun.dll
+.xray-config-*.json
 
 #yarn
 .yarn/*

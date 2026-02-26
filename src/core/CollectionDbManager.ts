@@ -1,7 +1,13 @@
-import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync } from "fs";
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  copyFileSync,
+  mkdirSync,
+} from "fs";
 import _path from "path";
-import { collection, config } from "../state";
 import OcdlError from "../struct/OcdlError";
+import Manager from "./Manager";
 
 interface CollectionDbEntry {
   name: string;
@@ -10,13 +16,13 @@ interface CollectionDbEntry {
 
 export default class CollectionDbManager {
   private collectionDbPath: string;
-  private version: number = 20150203;
+  private version = 20150203;
   private collections: CollectionDbEntry[] = [];
-  private offset: number = 0;
+  private offset = 0;
   private lastBackupPath: string | null = null;
 
   constructor() {
-    this.collectionDbPath = config.collectionDbPath;
+    this.collectionDbPath = Manager.config.collectionDbPath;
   }
 
   private readOsuString(buffer: Buffer): string {
@@ -24,16 +30,13 @@ export default class CollectionDbManager {
     this.offset += 1;
 
     if (indicator === 0x00) return "";
-
     if (indicator !== 0x0b) {
       throw new Error(`Invalid string indicator: ${indicator}`);
     }
 
-    // Read ULEB128 length
     let length = 0;
     let shift = 0;
     let byte = 0;
-
     do {
       byte = buffer.readUInt8(this.offset);
       this.offset += 1;
@@ -43,7 +46,6 @@ export default class CollectionDbManager {
 
     const str = buffer.toString("utf-8", this.offset, this.offset + length);
     this.offset += length;
-
     return str;
   }
 
@@ -82,24 +84,15 @@ export default class CollectionDbManager {
     }
   }
 
-  /**
-   * Check if collection with this name exists
-   */
   hasCollection(collectionName: string): boolean {
     return this.collections.some((c) => c.name === collectionName);
   }
 
-  /**
-   * Get number of beatmaps in collection (or 0 if doesn't exist)
-   */
   getCollectionSize(collectionName: string): number {
     const coll = this.collections.find((c) => c.name === collectionName);
     return coll ? coll.md5Hashes.length : 0;
   }
 
-  /**
-   * Add collection (merges if exists)
-   */
   addCollection(collectionName: string, md5Hashes: string[]): void {
     const existingIndex = this.collections.findIndex(
       (c) => c.name === collectionName
@@ -114,9 +107,6 @@ export default class CollectionDbManager {
     }
   }
 
-  /**
-   * Replace collection (completely overwrites if exists)
-   */
   replaceCollection(collectionName: string, md5Hashes: string[]): void {
     const existingIndex = this.collections.findIndex(
       (c) => c.name === collectionName
@@ -137,7 +127,6 @@ export default class CollectionDbManager {
     const strBuffer = Buffer.from(str, "utf-8");
     const length = strBuffer.length;
 
-    // Encode length as ULEB128
     const lengthBytes: number[] = [];
     let value = length;
     do {
@@ -218,7 +207,8 @@ export default class CollectionDbManager {
 
   static isOsuRunning(): boolean {
     try {
-      const { execSync } = require("child_process");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
+      const { execSync } = require("child_process") as typeof import("child_process");
       const result = execSync('tasklist /FI "IMAGENAME eq osu!.exe"', {
         encoding: "utf-8",
       });
@@ -228,58 +218,37 @@ export default class CollectionDbManager {
     }
   }
 
-  static getMd5HashesFromCollection(): string[] {
-    const hashes: string[] = [];
-    collection.beatMapSets.forEach((beatMapSet) => {
-      beatMapSet.beatMaps.forEach((beatMap) => {
-        if (beatMap.checksum) {
-          hashes.push(beatMap.checksum);
-        }
-      });
-    });
-    return hashes;
-  }
-
   /**
-   * Get hashes from collection, replacing apiHash with realHash where possible
+   * Get MD5 hashes, replacing API hashes with real ones from osu!.db where possible.
    * @param beatmapIdToRealHash mapping beatmapId -> realHash from osu!.db
-   * @param savedBeatMaps optional saved beatmaps data (use when collection.beatMapSets may be modified)
+   * @param savedBeatMaps optional saved beatmaps (use when collection.beatMapSets may be modified)
    */
   static getMd5HashesWithRealHashes(
     beatmapIdToRealHash: Map<number, string>,
     savedBeatMaps?: Array<{ id: number; checksum: string }>
-  ): {
-    hashes: string[];
-    replaced: number;
-    notFound: number
-  } {
+  ): { hashes: string[]; replaced: number; notFound: number } {
     const hashes: string[] = [];
     let replaced = 0;
     let notFound = 0;
 
-    // Use saved beatmaps if provided, otherwise read from collection
     if (savedBeatMaps) {
       for (const beatMap of savedBeatMaps) {
         const realHash = beatmapIdToRealHash.get(beatMap.id);
         if (realHash) {
           hashes.push(realHash);
-          if (realHash !== beatMap.checksum) {
-            replaced++;
-          }
+          if (realHash !== beatMap.checksum) replaced++;
         } else if (beatMap.checksum) {
           hashes.push(beatMap.checksum);
           notFound++;
         }
       }
     } else {
-      collection.beatMapSets.forEach((beatMapSet) => {
+      Manager.collection.beatMapSets.forEach((beatMapSet) => {
         beatMapSet.beatMaps.forEach((beatMap) => {
           const realHash = beatmapIdToRealHash.get(beatMap.id);
           if (realHash) {
             hashes.push(realHash);
-            if (realHash !== beatMap.checksum) {
-              replaced++;
-            }
+            if (realHash !== beatMap.checksum) replaced++;
           } else if (beatMap.checksum) {
             hashes.push(beatMap.checksum);
             notFound++;
@@ -289,49 +258,5 @@ export default class CollectionDbManager {
     }
 
     return { hashes, replaced, notFound };
-  }
-
-  // Get mapping oldMd5 -> beatmapId from current collection (API data)
-  static getApiHashToBeatmapId(): Map<string, number> {
-    const map = new Map<string, number>();
-    collection.beatMapSets.forEach((beatMapSet) => {
-      beatMapSet.beatMaps.forEach((beatMap) => {
-        if (beatMap.checksum) {
-          map.set(beatMap.checksum, beatMap.id);
-        }
-      });
-    });
-    return map;
-  }
-
-  // Fix hashes in collection.db using mapping oldMd5 -> newMd5
-  fixHashes(hashMapping: Map<string, string>): { totalFixed: number; collectionStats: Map<string, { fixed: number; total: number }> } {
-    let totalFixed = 0;
-    const collectionStats = new Map<string, { fixed: number; total: number }>();
-
-    for (const coll of this.collections) {
-      let fixed = 0;
-      const newHashes: string[] = [];
-
-      for (const oldHash of coll.md5Hashes) {
-        const newHash = hashMapping.get(oldHash);
-        if (newHash && newHash !== oldHash) {
-          newHashes.push(newHash);
-          fixed++;
-          totalFixed++;
-        } else {
-          newHashes.push(oldHash);
-        }
-      }
-
-      coll.md5Hashes = newHashes;
-      collectionStats.set(coll.name, { fixed, total: coll.md5Hashes.length });
-    }
-
-    return { totalFixed, collectionStats };
-  }
-
-  getCollections(): CollectionDbEntry[] {
-    return this.collections;
   }
 }

@@ -2,23 +2,27 @@ import { existsSync, writeFileSync } from "fs";
 import path from "path";
 import Logger from "../core/Logger";
 import type { Json, JsonValues, WorkingMode } from "../types";
-import { isBoolean, checkRange } from "../util";
+import Util from "../util";
 import OcdlError from "./OcdlError";
-import { CatboyServer, Mirror } from "./Constant";
+import { Mirror, CatboyServer } from "./Constant";
 
 export default class Config {
   parallel: boolean;
   concurrency: number;
   intervalCap: number;
-  directory: string; // For modes 1, 2, 3 — download destination
+  directory: string;
   mode: WorkingMode;
   logSize: number;
-  useSubfolder: boolean; // For modes 1, 2, 3 — create subfolder
-  osuPath: string; // osu! game folder
+  useSubfolder: boolean;
+  osuPath: string;
   mirror: Mirror;
   catboyServer: CatboyServer;
+  skipExisting: boolean;
   isFirstRun: boolean;
-  skipExisting: boolean; // Skip downloading beatmapsets that already exist in Songs
+  lang: "en" | "ru" | "none";
+  proxy: string;
+  activeProxyIndex: number;
+  vlessServers: string[];
 
   static readonly configFilePath = "./config.json";
 
@@ -34,57 +38,56 @@ export default class Config {
     }
 
     this.logSize = !isNaN(Number(config.logSize)) ? Number(config.logSize) : 15;
-    if (!checkRange(this.logSize, 0, Infinity)) {
-      this.logSize = 15;
-    }
+    if (!Util.checkRange(this.logSize, 0, Infinity)) this.logSize = 15;
 
-    this.parallel = isBoolean(config.parallel)
+    this.parallel = Util.isBoolean(config.parallel)
       ? (config.parallel as boolean)
       : true;
 
     this.concurrency = !isNaN(Number(config.concurrency))
       ? Number(config.concurrency)
       : 3;
-    if (!checkRange(this.concurrency, 0, 10)) {
-      this.concurrency = 5;
-    }
+    if (!Util.checkRange(this.concurrency, 0, 10)) this.concurrency = 5;
 
     this.intervalCap = !isNaN(Number(config.intervalCap))
       ? Number(config.intervalCap)
       : 50;
-    if (!checkRange(this.intervalCap, 0, 120)) {
-      this.intervalCap = 50;
-    }
+    if (!Util.checkRange(this.intervalCap, 0, 120)) this.intervalCap = 50;
 
     this.directory = this._getPath(config.directory);
     this.mode = this._getMode(config.mode);
-    this.useSubfolder = isBoolean(config.useSubfolder)
+    this.useSubfolder = Util.isBoolean(config.useSubfolder)
       ? (config.useSubfolder as boolean)
       : true;
 
-    // osuPath — main setting, other paths are derived from it
     this.osuPath = this._getOsuPath(config.osuPath);
 
-    // Migration: if old settings collectionDbPath/songsPath exist, derive osuPath from them
-    if (!this.osuPath || this.osuPath === process.cwd()) {
-      const oldCollectionDbPath = this._getPath(config.collectionDbPath);
-      const oldSongsPath = this._getPath(config.songsPath);
-
-      if (oldCollectionDbPath && oldCollectionDbPath !== process.cwd() && existsSync(oldCollectionDbPath)) {
-        this.osuPath = path.dirname(oldCollectionDbPath);
-      } else if (oldSongsPath && oldSongsPath !== process.cwd() && existsSync(oldSongsPath)) {
-        this.osuPath = path.dirname(oldSongsPath);
+    if (!this.osuPath) {
+      const oldColl = this._getPath(config.collectionDbPath);
+      const oldSongs = this._getPath(config.songsPath);
+      if (oldColl && existsSync(oldColl)) {
+        this.osuPath = path.dirname(oldColl);
+      } else if (oldSongs && existsSync(oldSongs)) {
+        this.osuPath = path.dirname(oldSongs);
       }
     }
 
     this.mirror = this._getMirror(config.mirror);
     this.catboyServer = this._getCatboyServer(config.catboyServer);
-    this.skipExisting = isBoolean(config.skipExisting)
+    this.skipExisting = Util.isBoolean(config.skipExisting)
       ? (config.skipExisting as boolean)
       : true;
+
+    this.lang = this._getLang(config.lang);
+    this.proxy = typeof config.proxy === "string" ? config.proxy : "";
+    this.activeProxyIndex = !isNaN(Number(config.activeProxyIndex))
+      ? Number(config.activeProxyIndex)
+      : -1;
+    this.vlessServers = Array.isArray(config.vlessServers)
+      ? (config.vlessServers as unknown[]).filter((s): s is string => typeof s === "string" && s.startsWith("vless://"))
+      : [];
   }
 
-  // Getters for automatic path resolution from osuPath
   get songsPath(): string {
     if (!this.osuPath) return "";
     return path.join(this.osuPath, "Songs");
@@ -100,12 +103,13 @@ export default class Config {
     return path.join(this.osuPath, "osu!.db");
   }
 
-  // Validate osuPath
   isOsuPathValid(): boolean {
     if (!this.osuPath) return false;
-    return existsSync(this.osuPath) &&
-           existsSync(this.songsPath) &&
-           existsSync(this.osuDbPath);
+    return (
+      existsSync(this.osuPath) &&
+      existsSync(this.songsPath) &&
+      existsSync(this.osuDbPath)
+    );
   }
 
   static generateConfig(): Config {
@@ -113,19 +117,27 @@ export default class Config {
     if (isFirstRun) {
       writeFileSync(
         Config.configFilePath,
-        JSON.stringify({
-          parallel: true,
-          concurrency: 5,
-          intervalCap: 50,
-          logSize: 15,
-          directory: "",
-          mode: 1,
-          useSubfolder: true,
-          osuPath: "",
-          mirror: Mirror.Catboy,
-          catboyServer: CatboyServer.Default,
-          skipExisting: true,
-        })
+        JSON.stringify(
+          {
+            parallel: true,
+            concurrency: 5,
+            intervalCap: 50,
+            logSize: 15,
+            directory: "",
+            mode: 1,
+            useSubfolder: true,
+            osuPath: "",
+            mirror: Mirror.Catboy,
+            catboyServer: CatboyServer.Default,
+            skipExisting: true,
+            lang: "none",
+            proxy: "",
+            activeProxyIndex: -1,
+            vlessServers: [],
+          },
+          null,
+          2
+        )
       );
     }
     return new Config(undefined, isFirstRun);
@@ -147,6 +159,10 @@ export default class Config {
           mirror: this.mirror,
           catboyServer: this.catboyServer,
           skipExisting: this.skipExisting,
+          lang: this.lang,
+          proxy: this.proxy,
+          activeProxyIndex: this.activeProxyIndex,
+          vlessServers: this.vlessServers,
         },
         null,
         2
@@ -154,16 +170,15 @@ export default class Config {
     );
   }
 
-  // Validate and get working mode with default value
-  private _getMode(data: JsonValues): 1 | 2 | 3 | 4 | 5 {
+  private _getMode(data: JsonValues): WorkingMode {
     const mode = Number(data);
-    // Check that mode is valid (1-5)
-    return mode >= 1 && mode <= 5 ? (mode as 1 | 2 | 3 | 4 | 5) : 1;
+    return mode >= 1 && mode <= 5 ? (mode as WorkingMode) : 1;
   }
 
   private _getPath(data: JsonValues): string {
-    if (typeof data !== "string" || !data) return process.cwd();
-    return path.isAbsolute(data) ? data : process.cwd();
+    const cwd = path.resolve();
+    if (typeof data !== "string" || !data) return cwd;
+    return path.isAbsolute(data) ? data : cwd;
   }
 
   private _getOsuPath(data: JsonValues): string {
@@ -172,16 +187,27 @@ export default class Config {
   }
 
   private _getMirror(data: JsonValues): Mirror {
-    if (typeof data === "string" && Object.values(Mirror).includes(data as Mirror)) {
+    if (
+      typeof data === "string" &&
+      Object.values(Mirror).includes(data as Mirror)
+    ) {
       return data as Mirror;
     }
     return Mirror.Catboy;
   }
 
   private _getCatboyServer(data: JsonValues): CatboyServer {
-    if (typeof data === "string" && Object.values(CatboyServer).includes(data as CatboyServer)) {
+    if (
+      typeof data === "string" &&
+      Object.values(CatboyServer).includes(data as CatboyServer)
+    ) {
       return data as CatboyServer;
     }
     return CatboyServer.Default;
+  }
+
+  private _getLang(data: JsonValues): "en" | "ru" | "none" {
+    if (data === "en" || data === "ru" || data === "none") return data;
+    return "none";
   }
 }

@@ -44,16 +44,17 @@ export default class Logger {
       // Construct the path to the missing beatmaps log file in the given folder
       const path = _path.join(folder, Logger.missingLogPath);
 
-      // Use map and join for efficient string concatenation
-      // instead of concatenation in loop (O(n) instead of O(n²))
-      const urlsString = beatMapSets
-        .map((beatMapSet) => `https://osu.ppy.sh/beatmapsets/${beatMapSet.id}`)
-        .join("\n");
+      let urlsString = "";
+      for (const beatMapSet of beatMapSets) {
+        // Construct the URL for the missing beatmap
+        const url = `https://osu.ppy.sh/beatmapsets/${beatMapSet.id}\n`;
+        urlsString += url;
+      }
 
       // Create file and write urls into it.
       writeFileSync(
         path,
-        `=== Missing Beatmap Sets ===\n[ Try to download them manually ]\n${urlsString}\n`
+        `=== Missing Beatmap Sets ===\n[ Try to download them manually ]\n${urlsString}`
       );
 
       return true;

@@ -6,5 +6,12 @@
   "directory": "",
   "mode": 1,
   "useSubfolder": true,
-  "collectionDbPath": ""
+  "osuPath": "C:\\osu!",
+  "mirror": "catboy",
+  "catboyServer": "default",
+  "skipExisting": true,
+  "lang": "none",
+  "proxy": "",
+  "activeProxyIndex": -1,
+  "vlessServers": []
 }
